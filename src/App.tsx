@@ -17,8 +17,15 @@ type FlashcardSet = {
   cards: Flashcard[]
 }
 
+type StudyGroup = {
+  id: string
+  name: string
+  setIds: string[]
+}
+
 type Library = {
   sets: FlashcardSet[]
+  groups: StudyGroup[]
   activeSetId: string
 }
 
@@ -66,7 +73,7 @@ function loadLibrary(): Library {
     if (Array.isArray(parsed)) {
       const cards = parsed.map(normalizeCard).filter((card): card is Flashcard => card !== null)
       const set = { id: makeId(), name: 'My flashcards', cards }
-      return { sets: [set], activeSetId: set.id }
+      return { sets: [set], groups: [], activeSetId: set.id }
     }
     if (parsed && typeof parsed === 'object' && 'sets' in parsed && Array.isArray(parsed.sets)) {
       const sets = parsed.sets.flatMap((value): FlashcardSet[] => {
@@ -77,17 +84,27 @@ function loadLibrary(): Library {
         return [{ id: typeof item.id === 'string' ? item.id : makeId(), name: item.name, cards }]
       })
       if (sets.length > 0) {
+        const validSetIds = new Set(sets.map((set) => set.id))
+        const groups = 'groups' in parsed && Array.isArray(parsed.groups)
+          ? parsed.groups.flatMap((value): StudyGroup[] => {
+            if (!value || typeof value !== 'object') return []
+            const group = value as Record<string, unknown>
+            if (typeof group.name !== 'string' || !Array.isArray(group.setIds)) return []
+            const setIds = [...new Set(group.setIds.filter((id): id is string => typeof id === 'string' && validSetIds.has(id)))]
+            return setIds.length >= 2 ? [{ id: typeof group.id === 'string' ? group.id : makeId(), name: group.name, setIds }] : []
+          })
+          : []
         const activeSetId = 'activeSetId' in parsed && typeof parsed.activeSetId === 'string' && sets.some((set) => set.id === parsed.activeSetId)
           ? parsed.activeSetId
           : sets[0].id
-        return { sets, activeSetId }
+        return { sets, groups, activeSetId }
       }
     }
   } catch {
     // Start with an empty library if stored data cannot be read.
   }
   const set = { id: makeId(), name: 'My first set', cards: [] }
-  return { sets: [set], activeSetId: set.id }
+  return { sets: [set], groups: [], activeSetId: set.id }
 }
 
 function readImage(file: File): Promise<string> {
@@ -219,6 +236,7 @@ function shuffle<T>(items: T[]) {
 function App() {
   const [library, setLibrary] = useState<Library>(loadLibrary)
   const [setName, setSetName] = useState('')
+  const [groupName, setGroupName] = useState('')
   const [selectedSetIds, setSelectedSetIds] = useState<string[]>([])
   const [front, setFront] = useState('')
   const [back, setBack] = useState('')
@@ -256,6 +274,34 @@ function App() {
   const currentReviewCard = reviewDeck.find((card) => card.id === reviewOrder[reviewIndex])
   const selectedSets = library.sets.filter((set) => selectedSetIds.includes(set.id))
   const selectedCards = selectedSets.flatMap((set) => set.cards)
+
+  function createGroup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = groupName.trim()
+    const setIds = selectedSets.map((set) => set.id)
+    if (!name || setIds.length < 2) return
+    const takenNames = new Set(library.groups.map((group) => group.name.toLocaleLowerCase()))
+    let uniqueName = name
+    let suffix = 2
+    while (takenNames.has(uniqueName.toLocaleLowerCase())) uniqueName = `${name} (${suffix++})`
+    const group = { id: makeId(), name: uniqueName, setIds }
+    setLibrary((value) => ({ ...value, groups: [...value.groups, group] }))
+    setGroupName('')
+    setNotice(`Created study group “${uniqueName}” with ${setIds.length} sets.`)
+  }
+
+  function studyGroup(group: StudyGroup) {
+    const memberIds = new Set(group.setIds)
+    const groupSets = library.sets.filter((set) => memberIds.has(set.id))
+    startReview(groupSets.flatMap((set) => set.cards), group.name)
+  }
+
+  function deleteGroup(groupId: string) {
+    const group = library.groups.find((item) => item.id === groupId)
+    if (!group || !window.confirm(`Delete the study group “${group.name}”? The flashcard sets will remain.`)) return
+    setLibrary((value) => ({ ...value, groups: value.groups.filter((item) => item.id !== groupId) }))
+    setNotice(`Deleted study group “${group.name}”.`)
+  }
 
   function startReview(reviewCards: Flashcard[], title: string, startAt = 0, shuffled = false) {
     if (reviewCards.length === 0) return
@@ -399,8 +445,8 @@ function App() {
   }
 
   function exportAllSets() {
-    downloadJson({ version: 2, exportedAt: new Date().toISOString(), sets: library.sets }, 'recall-all-sets.json')
-    setNotice(`Exported all ${library.sets.length} sets.`)
+    downloadJson({ version: 2, exportedAt: new Date().toISOString(), sets: library.sets, groups: library.groups }, 'recall-all-sets.json')
+    setNotice(`Exported all ${library.sets.length} sets and ${library.groups.length} study groups.`)
   }
 
   function downloadJson(payload: unknown, filename: string) {
@@ -430,12 +476,27 @@ function App() {
         }
       }
       let incomingSets: FlashcardSet[] = []
+      let incomingGroups: StudyGroup[] = []
       if (Array.isArray(parsed)) {
         const legacySet = { id: makeId(), name: 'Imported set', cards: parsed.map(normalizeCard).filter((card): card is Flashcard => card !== null).map((card) => ({ ...card, id: makeId() })) }
         incomingSets = [legacySet]
       } else if (parsed && typeof parsed === 'object' && 'sets' in parsed && Array.isArray(parsed.sets)) {
-        incomingSets = parsed.sets.map((set, index) => asSet(set, `Imported set ${index + 1}`)).filter((set): set is FlashcardSet => set !== null)
+        const sourceSetIds = new Map<string, string>()
+        incomingSets = parsed.sets.map((value, index) => {
+          const imported = asSet(value, `Imported set ${index + 1}`)
+          if (imported && value && typeof value === 'object' && 'id' in value && typeof value.id === 'string') sourceSetIds.set(value.id, imported.id)
+          return imported
+        }).filter((set): set is FlashcardSet => set !== null)
         if (incomingSets.length !== parsed.sets.length) throw new Error('One or more sets in this file are invalid.')
+        if ('groups' in parsed && Array.isArray(parsed.groups)) {
+          incomingGroups = parsed.groups.flatMap((value): StudyGroup[] => {
+            if (!value || typeof value !== 'object') return []
+            const group = value as Record<string, unknown>
+            if (typeof group.name !== 'string' || !Array.isArray(group.setIds)) return []
+            const setIds = [...new Set(group.setIds.flatMap((id) => typeof id === 'string' && sourceSetIds.has(id) ? [sourceSetIds.get(id)!] : []))]
+            return setIds.length >= 2 ? [{ id: makeId(), name: group.name, setIds }] : []
+          })
+        }
       } else if (parsed && typeof parsed === 'object' && 'set' in parsed) {
         const oneSet = asSet(parsed.set, 'Imported set')
         if (!oneSet) throw new Error('This file does not contain a valid flashcard set.')
@@ -463,9 +524,17 @@ function App() {
           names.add(name.toLocaleLowerCase())
           return { ...set, name }
         })
-        return { sets: [...value.sets, ...uniqueSets], activeSetId: uniqueSets[0].id }
+        const groupNames = new Set(value.groups.map((group) => group.name.toLocaleLowerCase()))
+        const uniqueGroups = incomingGroups.map((group) => {
+          let name = group.name
+          let suffix = 2
+          while (groupNames.has(name.toLocaleLowerCase())) name = `${group.name} (${suffix++})`
+          groupNames.add(name.toLocaleLowerCase())
+          return { ...group, name }
+        })
+        return { sets: [...value.sets, ...uniqueSets], groups: [...value.groups, ...uniqueGroups], activeSetId: uniqueSets[0].id }
       })
-      setNotice(`Imported ${incomingSets.length} set${incomingSets.length === 1 ? '' : 's'}.`)
+      setNotice(`Imported ${incomingSets.length} set${incomingSets.length === 1 ? '' : 's'} and ${incomingGroups.length} study group${incomingGroups.length === 1 ? '' : 's'}.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to read this JSON file.')
     } finally {
@@ -485,7 +554,10 @@ function App() {
     const replacement = remainingSets.length === 0 ? { id: makeId(), name: 'My first set', cards: [] } : null
     const nextSets = replacement ? [replacement] : remainingSets
     const nextActiveSetId = library.activeSetId === setId ? nextSets[0].id : library.activeSetId
-    setLibrary({ sets: nextSets, activeSetId: nextActiveSetId })
+    const groups = library.groups
+      .map((group) => ({ ...group, setIds: group.setIds.filter((id) => id !== setId) }))
+      .filter((group) => group.setIds.length >= 2)
+    setLibrary({ sets: nextSets, groups, activeSetId: nextActiveSetId })
     setSelectedSetIds((value) => value.filter((id) => id !== setId))
     if (currentSet?.id === setId && isCreating) closeCardEditor()
     setNotice(`Deleted “${target.name}” and its flashcards.`)
@@ -500,7 +572,7 @@ function App() {
     let suffix = 2
     while (takenNames.has(name.toLocaleLowerCase())) name = `${baseName} (${suffix++})`
     const set = { id: makeId(), name, cards: [] }
-    setLibrary((value) => ({ sets: [...value.sets, set], activeSetId: set.id }))
+    setLibrary((value) => ({ ...value, sets: [...value.sets, set], activeSetId: set.id }))
     setSelectedSetIds((value) => [...value, set.id])
     setSetName('')
     setNotice(`Created “${name}”.`)
@@ -697,7 +769,7 @@ function App() {
                 </button>
                 <label className="set-checkbox" title={`Include ${set.name} in a combined review`}>
                   <input type="checkbox" checked={selectedSetIds.includes(set.id)} onChange={(event) => setSelected(set.id, event.target.checked)} />
-                  <span>Review</span>
+                  <span>Select</span>
                 </label>
                 <button className="set-export" type="button" onClick={() => { downloadJson({ version: 2, exportedAt: new Date().toISOString(), set }, `${safeFileName(set.name)}.json`); setNotice(`Exported set “${set.name}”.`) }} aria-label={`Export ${set.name}`} title="Export this set"><Icon name="download" size={16} /></button>
                 <button className="set-delete" type="button" onClick={() => deleteSet(set.id)} aria-label={`Delete ${set.name}`} title="Delete study set"><Icon name="trash" size={16} /></button>
@@ -708,6 +780,34 @@ function App() {
             <button className="subtle-action" type="button" onClick={() => startReview(library.sets.flatMap((set) => set.cards), 'All sets')} disabled={library.sets.every((set) => set.cards.length === 0)}>Review all sets <Icon name="arrow" size={15} /></button>
             <button className="subtle-action" type="button" onClick={exportAllSets}>Export all sets <Icon name="download" size={15} /></button>
           </div>
+          <section className="groups-panel" aria-labelledby="groups-title">
+            <div className="groups-heading">
+              <div><p className="eyebrow">STUDY TOGETHER</p><h3 id="groups-title">Study groups <span className="collection-total">{library.groups.length}</span></h3></div>
+            </div>
+            <p className="groups-description">Choose at least two sets above to bundle them into a group you can review as one deck.</p>
+            <form className="group-create-form" onSubmit={createGroup}>
+              <input value={groupName} onChange={(event) => setGroupName(event.target.value)} aria-label="Study group name" placeholder="e.g. Biology final" />
+              <button className="button button-outline" type="submit" disabled={!groupName.trim() || selectedSets.length < 2}><Icon name="plus" size={15} /> Create from {selectedSets.length} selected</button>
+            </form>
+            {library.groups.length > 0 ? (
+              <div className="groups-list">
+                {library.groups.map((group) => {
+                  const members = library.sets.filter((set) => group.setIds.includes(set.id))
+                  const groupCardCount = members.reduce((count, set) => count + set.cards.length, 0)
+                  return (
+                    <article className="group-row" key={group.id}>
+                      <span className="group-icon"><Icon name="layers" size={18} /></span>
+                      <div className="group-info"><strong>{group.name}</strong><small>{members.map((set) => set.name).join(' · ')} · {groupCardCount} {groupCardCount === 1 ? 'card' : 'cards'}</small></div>
+                      <button className="button button-primary group-review-button" type="button" onClick={() => studyGroup(group)} disabled={groupCardCount === 0}>Review group <Icon name="arrow" size={15} /></button>
+                      <button className="group-delete-button" type="button" onClick={() => deleteGroup(group.id)} aria-label={`Delete ${group.name}`} title="Delete study group"><Icon name="trash" size={16} /></button>
+                    </article>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="groups-empty">No study groups yet. Create one to combine related sets.</div>
+            )}
+          </section>
         </section>
 
         <section className="collection-section" aria-labelledby="collection-title">

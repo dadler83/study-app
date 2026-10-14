@@ -366,6 +366,25 @@ main { padding-bottom: 35px; }
 .set-delete:hover { color: #a25e51; background: #fbefed; }
 .set-review-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 13px; padding-top: 11px; border-top: 1px solid #eef2ee; }
 .set-review-actions .subtle-action:disabled { color: #b8c2ba; cursor: not-allowed; }
+.groups-panel { margin-top: 20px; padding-top: 18px; border-top: 1px solid #eef2ee; }
+.groups-heading h3 { margin: 0; color: #31483a; font-size: 15px; font-weight: 650; }
+.groups-heading .eyebrow { margin-bottom: 6px; }
+.groups-description { margin: 7px 0 12px; color: #87958c; font-size: 11px; }
+.group-create-form { display: flex; gap: 8px; margin-bottom: 12px; }
+.group-create-form input { min-width: 0; flex: 1; padding: 9px 12px; border: 1px solid #e3eae4; border-radius: 8px; outline: none; background: #fbfcfa; color: #34483c; font: inherit; font-size: 12px; }
+.group-create-form input:focus { border-color: #8eb39a; box-shadow: 0 0 0 3px #81aa8d1c; }
+.group-create-form input::placeholder { color: #a4afa8; }
+.group-create-form .button { min-height: 37px; padding: 0 11px; font-size: 10px; }
+.groups-list { display: flex; flex-direction: column; gap: 7px; }
+.group-row { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e7eee8; border-radius: 10px; background: #fcfdfb; }
+.group-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; color: #63816b; background: #edf4ed; }
+.group-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.group-info strong { color: #43564a; font-size: 11px; font-weight: 700; }
+.group-info small { overflow: hidden; color: #94a097; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.group-review-button { min-height: 34px; padding: 0 10px; font-size: 10px; }
+.group-delete-button { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 0; border-radius: 7px; color: #9b928f; background: transparent; cursor: pointer; }
+.group-delete-button:hover { color: #a25e51; background: #fbefed; }
+.groups-empty { padding: 12px; border: 1px dashed #e1e9e2; border-radius: 9px; color: #98a49b; font-size: 10px; text-align: center; }
 .media-tools { display: flex; align-items: center; gap: 9px; margin: -9px 0 12px; }
 .media-button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; color: #5e8269; background: transparent; font: inherit; font-size: 10px; font-weight: 650; cursor: pointer; }
 .media-button:hover { color: #345d40; }
@@ -447,6 +466,12 @@ main { padding-bottom: 35px; }
   .set-review-actions .subtle-action { max-width: none; }
   .new-set-form { align-items: stretch; }
   .new-set-form .button { gap: 4px; padding: 0 8px; }
+  .group-create-form { flex-wrap: wrap; }
+  .group-create-form input { flex-basis: 100%; }
+  .group-create-form .button { flex: 1; }
+  .group-row { flex-wrap: wrap; }
+  .group-info { flex-basis: calc(100% - 55px); }
+  .group-review-button { margin-left: 44px; }
   .footer { font-size: 9px; }
 }
 
