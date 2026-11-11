@@ -66,6 +66,11 @@ function normalizeCard(value: unknown): Flashcard | null {
   }
 }
 
+function createEmptyLibrary(): Library {
+  const set = { id: makeId(), name: 'My first set', cards: [] }
+  return { sets: [set], groups: [], activeSetId: set.id }
+}
+
 function loadLibrary(): Library {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -103,8 +108,59 @@ function loadLibrary(): Library {
   } catch {
     // Start with an empty library if stored data cannot be read.
   }
-  const set = { id: makeId(), name: 'My first set', cards: [] }
-  return { sets: [set], groups: [], activeSetId: set.id }
+  return createEmptyLibrary()
+}
+
+function hasSavedLibrary() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null
+  } catch {
+    return false
+  }
+}
+
+function parseDefaultLibrary(value: unknown): Library | null {
+  if (!value || typeof value !== 'object' || !('sets' in value) || !Array.isArray(value.sets)) return null
+  const sourceSetIds = new Map<string, string>()
+  const usedSetIds = new Set<string>()
+  const sets = value.sets.flatMap((entry): FlashcardSet[] => {
+    if (!entry || typeof entry !== 'object') return []
+    const item = entry as Record<string, unknown>
+    if (typeof item.name !== 'string' || !item.name.trim()) return []
+    const sourceId = typeof item.id === 'string' && item.id.trim() ? item.id : undefined
+    const id = sourceId && !usedSetIds.has(sourceId) ? sourceId : makeId()
+    usedSetIds.add(id)
+    if (sourceId && !sourceSetIds.has(sourceId)) sourceSetIds.set(sourceId, id)
+    const cards = Array.isArray(item.cards)
+      ? item.cards.map(normalizeCard).filter((card): card is Flashcard => card !== null).map((card) => ({ ...card, id: makeId() }))
+      : []
+    return [{ id, name: item.name.trim(), cards }]
+  })
+  if (sets.length === 0) return null
+
+  const groups = 'groups' in value && Array.isArray(value.groups)
+    ? value.groups.flatMap((entry): StudyGroup[] => {
+      if (!entry || typeof entry !== 'object') return []
+      const group = entry as Record<string, unknown>
+      if (typeof group.name !== 'string' || !group.name.trim() || !Array.isArray(group.setIds)) return []
+      const setIds = [...new Set(group.setIds.flatMap((id) => typeof id === 'string' && sourceSetIds.has(id) ? [sourceSetIds.get(id)!] : []))]
+      return setIds.length >= 2 ? [{ id: makeId(), name: group.name.trim(), setIds }] : []
+    })
+    : []
+  const activeSetId = 'activeSetId' in value && typeof value.activeSetId === 'string' && sets.some((set) => set.id === value.activeSetId)
+    ? value.activeSetId
+    : sets[0].id
+  return { sets, groups, activeSetId }
+}
+
+async function fetchDefaultLibrary(): Promise<Library | null> {
+  const response = await fetch(`${import.meta.env.BASE_URL}default.json`)
+  if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return null
+  const value: unknown = await response.json()
+  if (typeof value === 'object' && value !== null && 'sets' in value && Array.isArray(value.sets) && value.sets.length === 0) return null
+  const defaults = parseDefaultLibrary(value)
+  if (!defaults) throw new Error('default.json must contain a non-empty sets array.')
+  return defaults
 }
 
 function readImage(file: File): Promise<string> {
@@ -235,6 +291,7 @@ function shuffle<T>(items: T[]) {
 
 function App() {
   const [library, setLibrary] = useState<Library>(loadLibrary)
+  const [libraryReady, setLibraryReady] = useState(hasSavedLibrary)
   const [setName, setSetName] = useState('')
   const [groupName, setGroupName] = useState('')
   const [selectedSetIds, setSelectedSetIds] = useState<string[]>([])
@@ -262,18 +319,47 @@ function App() {
   const suppressClick = useRef(false)
 
   useEffect(() => {
+    if (!libraryReady) return
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(library))
     } catch {
       window.setTimeout(() => setNotice('Storage is full. Export your sets to keep a backup, then remove a few large images.'), 0)
     }
-  }, [library])
+  }, [library, libraryReady])
+
+  useEffect(() => {
+    if (libraryReady) return
+    let cancelled = false
+    fetchDefaultLibrary()
+      .then((defaults) => {
+        if (!cancelled && defaults) setLibrary(defaults)
+      })
+      .catch(() => {
+        if (!cancelled) setNotice('Unable to read default.json. Check that it contains valid JSON.')
+      })
+      .finally(() => {
+        if (!cancelled) setLibraryReady(true)
+      })
+    return () => { cancelled = true }
+  }, [libraryReady])
 
   const currentSet = library.sets.find((set) => set.id === library.activeSetId) ?? library.sets[0]
   const cards = currentSet?.cards ?? []
   const currentReviewCard = reviewDeck.find((card) => card.id === reviewOrder[reviewIndex])
   const selectedSets = library.sets.filter((set) => selectedSetIds.includes(set.id))
   const selectedCards = selectedSets.flatMap((set) => set.cards)
+
+  async function resetToDefaults() {
+    if (!window.confirm('Replace all saved study sets and groups with the current defaults? This cannot be undone.')) return
+    try {
+      const defaults = await fetchDefaultLibrary()
+      setLibrary(defaults ?? createEmptyLibrary())
+      setSelectedSetIds([])
+      setNotice(defaults ? 'Study sets reset to the current defaults.' : 'Study sets reset. No defaults are configured, so a blank set was created.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to load default study sets.')
+    }
+  }
 
   function createGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -596,6 +682,8 @@ function App() {
   const reviewFaceImage = currentReviewCard ? (isReviewFlipped ? currentReviewCard.backImage : currentReviewCard.frontImage) : undefined
   const reviewFaceDrawing = currentReviewCard ? (isReviewFlipped ? currentReviewCard.backDrawing : currentReviewCard.frontDrawing) : undefined
 
+  if (!libraryReady) return <main className="default-loading" aria-live="polite">Loading your study sets…</main>
+
   return (
     isReviewing ? (
       <div className="review-mode">
@@ -744,6 +832,9 @@ function App() {
             <Icon name="layers" /> <span>All sets</span>
           </button>
           <span className="top-divider" />
+          <button className="button button-quiet reset-defaults-button" type="button" onClick={resetToDefaults} aria-label="Reset study sets to defaults" title="Replace saved study sets with defaults">
+            <Icon name="rotate" /> <span>Reset</span>
+          </button>
           <div className="avatar" aria-label="Your study space">S</div>
         </nav>
       </header>

@@ -1,5 +1,26 @@
 # React + TypeScript + Vite
 
+## Default study sets
+
+Edit `public/default.json` to provide starter sets for new users. The app reads this file only when there is no saved library in the browser; existing saved sets are never replaced automatically. Use the **Reset** button in the app to replace the current library with the latest defaults (or a blank set if no defaults are configured); this requires confirmation and replaces all saved sets and groups. The default file can be omitted entirely.
+
+Use the same collection shape as **Export all sets**:
+
+```json
+{
+  "sets": [
+    {
+      "name": "Biology",
+      "cards": [
+        { "front": "What is photosynthesis?", "back": "The process plants use to convert light into chemical energy." }
+      ]
+    }
+  ]
+}
+```
+
+Each card needs non-empty `front` and `back` text, or an embedded `data:image/...` image/drawing on each side. Optional set `id` values can be used to connect `groups` via `setIds`; set IDs are generated automatically otherwise. To load updated defaults during development, clear this app's saved site data first.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

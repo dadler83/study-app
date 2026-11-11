@@ -197,6 +197,14 @@
   text-align: left;
 }
 
+.default-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: #82918a;
+  font-size: 14px;
+}
+
 .topbar {
   height: 82px;
   display: flex;
